@@ -1,0 +1,14 @@
+version: "3.8"
+services:
+
+  logstash:
+    hostname: logstash-container
+    image: docker.elastic.co/logstash/logstash:8.13.0
+    container_name: logstash-container
+    environment:
+      XPACK_MONITORING_ENABLED: "false"
+    ports:
+      - 9090:9090
+    volumes:
+      - ./logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    
