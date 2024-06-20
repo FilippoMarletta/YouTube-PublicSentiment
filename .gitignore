@@ -130,6 +130,7 @@ ENV/
 env.bak/
 venv.bak/
 virtual_env
+python_script/Secrets.py
 
 # Spyder project settings
 .spyderproject

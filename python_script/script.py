@@ -3,8 +3,9 @@ import httpx
 import asyncio
 import sys
 import requests
+import Secrets
 
-DEVELOPER_KEY
+api_key = Secrets.DEVELOPER_KEY
 api_service_name = "youtube"
 api_version = "v3"
 
@@ -17,7 +18,7 @@ async def get_youtube_data(url):
     async with httpx.AsyncClient() as client:
         async with client.stream(
             "GET",
-            f"https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId={video_id}&maxResults=100&key={DEVELOPER_KEY}",
+            f"https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId={video_id}&maxResults=100&key={api_key}",
             headers={"accept": "application/json"},
         ) as response:
             block = ""
@@ -46,13 +47,13 @@ async def loop_data(url):
 
 
 if __name__ == "__main__":
-    print("Youtube data gatherer started")
-    
     
     if(len(sys.argv) < 2):
         print("Usage: python script.py <url>")
         exit(1)
-    
+        
+    print("Youtube data gatherer started") 
+       
     url = sys.argv[1]
     asyncio.run(loop_data(url))
     print("Youtube data gathering...")
