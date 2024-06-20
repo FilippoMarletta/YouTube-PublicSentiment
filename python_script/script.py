@@ -4,7 +4,7 @@ import asyncio
 import sys
 import requests
 
-DEVELOPER_KEY = "AIzaSyCEa8xGS5kKxyVpx8LUmxrBOq1-fFvW3w0"
+DEVELOPER_KEY
 api_service_name = "youtube"
 api_version = "v3"
 
