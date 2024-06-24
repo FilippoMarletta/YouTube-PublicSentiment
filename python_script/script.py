@@ -1,64 +1,141 @@
-import json
-import httpx
-import asyncio
 import sys
+import time
 import requests
+from collections import deque
+from googleapiclient.discovery import build
+from urllib.parse import urlparse, parse_qs
 import Secrets
 
-api_key = Secrets.DEVELOPER_KEY
-api_service_name = "youtube"
-api_version = "v3"
+# Configura le credenziali delle API
+API_KEY = Secrets.DEVELOPER_KEY
+PARTS = 'snippet,replies'
+ORDER = 'time'  # Preleva dal più recente al più vecchio
+MAX_RESULTS = 100
+ID_LIMIT = 500 # Numero massimo di ID da mantenere in memoria
 
-async def get_youtube_data(url):
-    
-    query = url.split("?")[1]
-    params = dict([item.split("=") for item in query.split("&")])
-    video_id = params.get("v")
+# URL dell'istanza di Logstash
+LOGSTASH_URL = 'http://host.docker.internal:9090'
 
-    async with httpx.AsyncClient() as client:
-        async with client.stream(
-            "GET",
-            f"https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId={video_id}&maxResults=100&key={api_key}",
-            headers={"accept": "application/json"},
-        ) as response:
-            block = ""
-            async for line in response.aiter_lines():
-                block += str(line)
-                if line[0] == "}":
-                    data = json.loads(block)
-                    block = ""
-                    yield data
-            
-            
+# Inizializza il servizio delle API di YouTube
+youtube = build('youtube', 'v3', developerKey=API_KEY)
 
-def push_to_logstash(data):
+# Deque per tenere traccia degli ID dei commenti già letti
+processed_comment_ids = deque(maxlen=ID_LIMIT)
+
+def get_video_id(url):
     try:
-        response = requests.post("http://host.docker.internal:9090", json=data)
+        # Estrai l'ID del video dall'URL
+        query = urlparse(url).query
+        params = parse_qs(query)
+        video_id = params.get('v')
+        if video_id:
+            return video_id[0]
+        else:
+            raise ValueError('URL del video non valido')
+    except Exception as e:
+        print(f"Errore nell'estrazione dell'ID del video: {e}")
+        sys.exit(1)
+
+def get_comments(video_id, page_token=None):
+    try:
+        # Richiedi i commenti del video
+        request = youtube.commentThreads().list(
+            part=PARTS,
+            videoId=video_id,
+            order=ORDER,
+            pageToken=page_token,
+            maxResults=MAX_RESULTS
+        )
+        response = request.execute()
+        return response
+    except Exception as e:
+        print(f"Errore nella richiesta dei commenti: {e}")
+        return None
+
+def send_to_logstash(comment):
+    try:
+        # Invia i commenti a Logstash
+        response = requests.post(LOGSTASH_URL, json=comment)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        print("Error sending data to Logstash:", e)
-    
+        print(f"Errore nell'invio a Logstash: {e}")
 
+def process_comment(comment):
+    global comment_count
+    try:
+        snippet = comment['snippet']['topLevelComment']['snippet']
+        id = comment['id']
+        author = snippet['authorDisplayName']
+        text = snippet['textDisplay']
+        published_at = snippet['publishedAt']
+        like_count = comment['snippet']['topLevelComment']['snippet']['likeCount']
 
-async def loop_data(url):
-    async for d in get_youtube_data(url):
-        push_to_logstash(d)
-    
-
-
-if __name__ == "__main__":
-    
-    if(len(sys.argv) < 2):
-        print("Usage: python script.py <url>")
-        exit(1)
+        comment_data = {
+            'type': 'comment',
+            'id': id,
+            'published_at': published_at,
+            'author': author,
+            'text': text,
+            'like_count': like_count
+        }
         
-    print("Youtube data gatherer started") 
-       
-    url = sys.argv[1]
-    asyncio.run(loop_data(url))
-    print("Youtube data gathering...")
+        
+        print(f"{id} - {published_at} - {author}: {text}")
+
+        # Invia il commento a Logstash
+        send_to_logstash(comment_data)
+
+        # Aggiungi l'ID del commento alla deque
+        processed_comment_ids.append(comment['id'])
+        comment_count += 1
+    except KeyError as e:
+        print(f"Errore nel processare un commento: {e}")
+
+def main():
+    if len(sys.argv) != 2:
+        print('Uso: python script.py [url]')
+        sys.exit(1)
     
+    video_url = sys.argv[1]
+    video_id = get_video_id(video_url)
+    print(f"ID del video: {video_id}")
+    next_page_token = None
+    stop = False
+    global comment_count
+    comment_count = 0
     
-    
-    
-   
+    while True:
+        response = get_comments(video_id, next_page_token)
+        if response is None:
+            print("Errore nel recupero dei commenti, riprovo dopo 10 minuti...")
+            time.sleep(600)
+            continue
+
+        comments = response.get('items', [])
+        
+        for comment in comments:
+            comment_id = comment['id']
+            if comment_id in processed_comment_ids:
+                stop = True
+                break 
+            process_comment(comment)
+        
+        print(f"Numero totale di commenti ritirati fino ad ora: {comment_count}",)
+            
+        if stop:   # abbiamo finito di leggere i commenti futuri per il momento
+            next_page_token = None
+            stop = False
+            time.sleep(10) 
+        elif not stop and next_page_token:    # stiamo leggendo i commenti scritti prima dell'avvio dello script
+            next_page_token = response.get('nextPageToken')
+        elif not stop and not next_page_token:  # stiamo iniziando a leggere i commenti futuri
+            next_page_token = None  
+            time.sleep(10)  
+        
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as e:
+        print(f"Errore critico: {e}")
+        sys.exit(1)
