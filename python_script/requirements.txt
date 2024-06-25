@@ -17,3 +17,4 @@ requests==2.32.3
 rsa==4.9
 uritemplate==4.1.1
 urllib3==2.2.2
+get-docker-secret

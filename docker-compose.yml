@@ -1,5 +1,20 @@
-version: "3.8"
+version: "3.9"
 services:
+
+  youtube_comments:
+    hostname: youtube_comments
+    build: ./python_script
+    container_name: youtube_comments
+    volumes:
+      - ./python_script/script.py:/app/script.py
+    tty: true
+    stdin_open: true
+    secrets: 
+      - youtube_api_key
+    entrypoint: ["python", "script.py"]
+    depends_on:
+      logstash:
+        condition: service_started
 
   logstash:
     hostname: logstash-container
@@ -11,4 +26,7 @@ services:
       - 9090:9090
     volumes:
       - ./logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
-    
+  
+secrets:
+  youtube_api_key:
+    file: ./python_script/.secret

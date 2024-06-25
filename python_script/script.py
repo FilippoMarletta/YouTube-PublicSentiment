@@ -4,11 +4,11 @@ import requests
 from collections import deque
 from googleapiclient.discovery import build
 from urllib.parse import urlparse, parse_qs
-import Secrets
+from get_docker_secret import get_docker_secret
 
 
 # Configura le credenziali delle API
-API_KEY = Secrets.DEVELOPER_KEY
+API_KEY = get_docker_secret('youtube_api_key')
 PARTS = 'snippet,replies'
 ORDER = 'time'  # Preleva dal più recente al più vecchio
 MAX_RESULTS = 100
@@ -95,11 +95,14 @@ def process_comment(comment):
 
 if __name__ == '__main__':
     try:
-        if len(sys.argv) != 2:
-            print('Uso: python script.py [url]')
+        # Controllo argomenti
+        if len(sys.argv) < 2:
+            print("Usage: python script.py <url>")
             sys.exit(1)
-    
+        
         video_url = sys.argv[1]
+        print(f"URL del video: {video_url}")
+        
         video_id = get_video_id(video_url)
         print(f"ID del video: {video_id}")
         next_page_token = None
@@ -134,7 +137,7 @@ if __name__ == '__main__':
                 next_page_token = None
                 stop = False
                 time.sleep(10) 
-            elif not stop and next_page_token:    # stiamo leggendo i commenti scritti prima dell'avvio dello script
+            elif not stop and response.get('nextPageToken'):    # stiamo leggendo i commenti scritti prima dell'avvio dello script
                 next_page_token = response.get('nextPageToken')
             elif not stop and not next_page_token:  # stiamo iniziando a leggere i commenti futuri
                 next_page_token = None  
