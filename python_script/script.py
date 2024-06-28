@@ -1,7 +1,7 @@
 import sys
 import time
 import requests
-from collections import deque
+
 from googleapiclient.discovery import build
 from urllib.parse import urlparse, parse_qs
 from get_docker_secret import get_docker_secret
@@ -12,7 +12,7 @@ API_KEY = get_docker_secret('youtube_api_key')
 PARTS = 'snippet,replies'
 ORDER = 'time'  # Preleva dal più recente al più vecchio
 MAX_RESULTS = 100
-ID_LIMIT = 500 # Numero massimo di ID da mantenere in memoria
+
 
 # URL dell'istanza di Logstash
 LOGSTASH_URL = 'http://host.docker.internal:9090'
@@ -21,7 +21,7 @@ LOGSTASH_URL = 'http://host.docker.internal:9090'
 youtube = build('youtube', 'v3', developerKey=API_KEY)
 
 # Deque per tenere traccia degli ID dei commenti già letti
-processed_comment_ids = deque(maxlen=ID_LIMIT)
+processed_comment_ids = set()
 
 def get_video_id(url):
     try:
@@ -88,7 +88,7 @@ def process_comment(comment):
         send_to_logstash(comment_data)
 
         # Aggiungi l'ID del commento alla deque
-        processed_comment_ids.append(comment['id'])
+        processed_comment_ids.add(id)
         comment_count += 1
     except KeyError as e:
         print(f"Errore nel processare un commento: {e}")
@@ -136,12 +136,15 @@ if __name__ == '__main__':
             if stop:   # abbiamo finito di leggere i commenti futuri per il momento
                 next_page_token = None
                 stop = False
-                time.sleep(10) 
+                print("finito di leggere i commenti futuri per il momento")
+                time.sleep(20) 
             elif not stop and response.get('nextPageToken'):    # stiamo leggendo i commenti scritti prima dell'avvio dello script
                 next_page_token = response.get('nextPageToken')
+                print("stiamo leggendo i commenti scritti prima dell'avvio dello script")
             elif not stop and not next_page_token:  # stiamo iniziando a leggere i commenti futuri
                 next_page_token = None  
-                time.sleep(10)  
+                print("stiamo iniziando a leggere i commenti futuri")
+                time.sleep(20)  
     except Exception as e:
         print(f"Errore critico: {e}")
         sys.exit(1)
