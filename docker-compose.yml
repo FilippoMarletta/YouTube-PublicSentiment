@@ -9,7 +9,7 @@ services:
       - ./python_script/script.py:/app/script.py
     secrets: 
       - youtube_api_key
-    entrypoint: ["python", "script.py", "https://www.youtube.com/watch?v=hrHK7FNgnrM&ab_channel=PewDiePie"]
+    entrypoint: ["python", "script.py", ""]
     tty: true
     depends_on:
       logstash:
