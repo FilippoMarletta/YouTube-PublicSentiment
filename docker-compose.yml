@@ -41,13 +41,21 @@ services:
     image: apache/kafka:latest
     command: > 
       bash -c "
-      /opt/kafka/bin/kafka-topics.sh --create --topic youtube-comments --bootstrap-server broker:9092"
+      /opt/kafka/bin/kafka-topics.sh --create --topic youtube-comments --bootstrap-server broker:9092 &&
+      /opt/kafka/bin/kafka-topics.sh --create --topic enriched-comments --bootstrap-server broker:9092"
     depends_on:
       - kafka-broker
 
-  kafka-conusumer:
+  # kafka-conusumer-input:
+  # image: apache/kafka:latest
+  # command: /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server broker:9092 --topic youtube-comments
+  # depends_on:
+  #   kafka-topics:
+  #     condition: service_completed_successfully
+  
+  kafka-conusumer-output:
     image: apache/kafka:latest
-    command: /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server broker:9092 --topic youtube-comments
+    command: /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server broker:9092 --topic enriched-comments
     depends_on:
       kafka-topics:
         condition: service_completed_successfully
@@ -71,6 +79,28 @@ services:
     depends_on:
       kafka-topics:
         condition: service_completed_successfully
+  
+  
+  spark:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: spark
+    hostname: spark
+    ports:
+      - "4040:4040"
+    volumes:
+      - ./spark:/opt/youtubepublicsentiment
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /opt/youtubepublicsentiment/.secret
+    command: >
+      /opt/spark/bin/spark-submit --conf spark.driver.extraJavaOptions="-Divy.cache.dir=/tmp -Divy.home=/tmp" --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.2,org.elasticsearch:elasticsearch-spark-30_2.12:8.13.4 /opt/youtubepublicsentiment/youtubepublicsentiment.py
+    depends_on:
+      kafka-topics:
+        condition: service_completed_successfully
+      youtube_comments:
+        condition: service_started
+      
 
 secrets:
   youtube_api_key:
