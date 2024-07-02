@@ -2,6 +2,7 @@ import sys
 import time
 import requests
 
+from datetime import datetime, timezone
 from googleapiclient.discovery import build
 from urllib.parse import urlparse, parse_qs
 from get_docker_secret import get_docker_secret
@@ -10,8 +11,8 @@ from get_docker_secret import get_docker_secret
 # Configura le credenziali delle API
 API_KEY = get_docker_secret('youtube_api_key')
 PARTS = 'snippet,replies'
-ORDER = 'time'  # Preleva dal più recente al più vecchio
-MAX_RESULTS = 100
+ORDER = 'time'  # Ordina i commenti per data di creazione dal più recente all'Meno recente
+MAX_RESULTS = 30
 
 
 # URL dell'istanza di Logstash
@@ -68,10 +69,13 @@ def process_comment(comment):
     try:
         snippet = comment['snippet']['topLevelComment']['snippet']
         id = comment['id']
+        if id in processed_comment_ids:
+            return
+
         author = snippet['authorDisplayName']
         text = snippet['textDisplay']
         published_at = snippet['publishedAt']
-        like_count = comment['snippet']['topLevelComment']['snippet']['likeCount']
+        like_count = snippet['likeCount']
 
         comment_data = {
             'type': 'comment',
@@ -90,8 +94,10 @@ def process_comment(comment):
         # Aggiungi l'ID del commento alla deque
         processed_comment_ids.add(id)
         comment_count += 1
+        return True
     except KeyError as e:
         print(f"Errore nel processare un commento: {e}")
+        return False
 
 if __name__ == '__main__':
     try:
@@ -105,14 +111,13 @@ if __name__ == '__main__':
         
         video_id = get_video_id(video_url)
         print(f"ID del video: {video_id}")
-        next_page_token = None
-        stop = False
+        
         global comment_count
         comment_count = 0
-        prev_comment_count = 0
+        page_token = None
         
         while True:
-            response = get_comments(video_id, next_page_token)
+            response = get_comments(video_id, page_token)
             if response is None:
                 print("Errore nel recupero dei commenti, riprovo dopo 10 minuti...")
                 time.sleep(600)
@@ -120,31 +125,32 @@ if __name__ == '__main__':
 
             comments = response.get('items', [])
             
-            for comment in comments:
-                comment_id = comment['id']
-                if comment_id in processed_comment_ids:
-                    stop = True
-                    break 
-                prev_comment_count = comment_count
-                process_comment(comment)
+            if not comments:
+                print("Nessun nuovo commento trovato. Attendo 35 secondi...")
+                time.sleep(30)
+                page_token = None
+                continue
 
-            #print(f"comment_count: {comment_count} prev_comment_count: {prev_comment_count}")
-            if comment_count > prev_comment_count:
-                print(f"Numero totale di commenti ritirati fino ad ora: {comment_count}")
-            prev_comment_count = comment_count
+         
+
+            new_comments = []
+            for comment in reversed(comments):  # Invertiamo l'ordine per processare dal più vecchio al più recente
+                if comment['id'] not in processed_comment_ids:
+                    new_comments.append(comment)
+                else:
+                    break  # Abbiamo raggiunto un commento già processato
+
+            for comment in new_comments:
+                process_comment(comment)
+                
+            print(f"Numero totale di commenti ritirati fino ad ora: {comment_count}")
+
+            if len(new_comments) == len(comments):  # Tutti i commenti erano nuovi
+                page_token = response.get('nextPageToken')
+            else:
+                page_token = None  # Ricomincia dall'inizio per cercare nuovi commenti
             
-            if stop:   # abbiamo finito di leggere i commenti futuri per il momento
-                next_page_token = None
-                stop = False
-                print("finito di leggere i commenti futuri per il momento")
-                time.sleep(20) 
-            elif not stop and response.get('nextPageToken'):    # stiamo leggendo i commenti scritti prima dell'avvio dello script
-                next_page_token = response.get('nextPageToken')
-                print("stiamo leggendo i commenti scritti prima dell'avvio dello script")
-            elif not stop and not next_page_token:  # stiamo iniziando a leggere i commenti futuri
-                next_page_token = None  
-                print("stiamo iniziando a leggere i commenti futuri")
-                time.sleep(20)  
+            time.sleep(30)  # Breve pausa per non sovraccaricare l'API
     except Exception as e:
         print(f"Errore critico: {e}")
         sys.exit(1)

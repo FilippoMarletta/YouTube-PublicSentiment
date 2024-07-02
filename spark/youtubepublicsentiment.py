@@ -59,20 +59,7 @@ json_schema = StructType([
 ])
 
 
-# Read data from Kafka without using streaming
-df_prova = spark \
-    .read \
-    .format("kafka") \
-    .option("kafka.bootstrap.servers", kafkaServer) \
-    .option("subscribe", inputTopic) \
-    .option("startingOffsets", "earliest") \
-    .load()
-
-#df_prova.show()
-
-#print("Records loaded in df_prova:", df_prova.count())
-
-# Read streaming data from Kafka with initial dataframe buffer df_prova
+# Read streaming data from Kafka 
 df = spark \
     .readStream \
     .format("kafka") \
@@ -80,7 +67,6 @@ df = spark \
     .option("subscribe", inputTopic) \
     .option("startingOffsets", "earliest") \
     .option("maxOffsetsPerTrigger", 100000) \
-    .option("initialDataFrame", df_prova) \
     .load()
 
 # Select the value and timestamp fields and cast them to string
@@ -99,8 +85,12 @@ def gcp_sentiment(text):
         # Initialize the Google Cloud Language client
         client = language_v2.LanguageServiceClient()
         document = language_v2.Document(content=text, type=language_v2.Document.Type.PLAIN_TEXT)
-        sentiment = client.analyze_sentiment(document=document).document_sentiment
-        sentiment_score = sentiment.score
+        try :
+            sentiment = client.analyze_sentiment(document=document).document_sentiment
+            sentiment_score = sentiment.score
+        except Exception as e:
+            print(f"Error analyzing sentiment: {e}")
+            sentiment_score = 0
 
         # Determine the sentiment label based on score
         if sentiment_score > 0.6:
