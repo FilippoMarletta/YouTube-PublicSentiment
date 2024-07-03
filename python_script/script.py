@@ -1,8 +1,6 @@
 import sys
 import time
 import requests
-
-from datetime import datetime, timezone
 from googleapiclient.discovery import build
 from urllib.parse import urlparse, parse_qs
 from get_docker_secret import get_docker_secret
