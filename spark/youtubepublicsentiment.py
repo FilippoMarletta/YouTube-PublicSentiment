@@ -5,20 +5,21 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json, udf, to_json, struct
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 from pyspark.sql.functions import split
-#from elasticsearch import Elasticsearch
+from elasticsearch import Elasticsearch
 from google.cloud import language_v2
+import random
 
 
 
 
 # Initialize Spark Context and Session
-#es = Elasticsearch("http://elasticsearch:9200")
+es = Elasticsearch("http://elasticsearch:9200")
 sparkConf = SparkConf() \
-                        #.set("es.nodes", "elasticsearch") \
-                        #.set("es.port", "9200") \
-                        #.set("es.index.auto.create", "true")
+                        .set("es.nodes", "elasticsearch") \
+                        .set("es.port", "9200") \
+                        .set("es.index.auto.create", "true")
 
-"""
+
 mapping = {
     "mappings": {
         "properties": {
@@ -36,7 +37,7 @@ if not es.indices.exists(index=elastic_index):
     es.indices.create(index=elastic_index, body=mapping)
 else:
     es.indices.put_mapping(index=elastic_index, body=mapping['mappings'])
-"""
+
 
 sc = SparkContext(appName="PythonStructuredStreamsKafka", conf=sparkConf)
 spark = SparkSession(sc)
@@ -107,11 +108,31 @@ def gcp_sentiment(text):
         return f"{sentiment_score}, {sentiment_label}"
     else:
         return "0, neutral"
-
+    
+def random_sentiment(text):
+    print(f"{text}")
+    if text is not None and text.strip() != "":
+        randome_sentiment_score = random.uniform(-1, 1)
+        
+        if randome_sentiment_score > 0.6:
+            sentiment_label = 'very positive'
+        elif randome_sentiment_score > 0.2:
+            sentiment_label = 'positive'
+        elif randome_sentiment_score >= -0.2:
+            sentiment_label = 'neutral'
+        elif randome_sentiment_score >= -0.6:
+            sentiment_label = 'negative'
+        else:
+            sentiment_label = 'very negative'
+        return f"{randome_sentiment_score}, {sentiment_label}"
+    else:
+        return "0, neutral"
+    
 gcp_sentiment_udf = udf(gcp_sentiment, StringType())
+random_sentiment_udf = udf(random_sentiment, StringType())
 
 # Apply sentiment analysis using the Google Cloud Natural Language API
-json_df = json_df.withColumn("gcp_sentiment", gcp_sentiment_udf(col("text")))
+json_df = json_df.withColumn("gcp_sentiment", random_sentiment_udf(col("text")))  # Replace with gcp_sentiment_udf
 
 # Split the gcp_sentiment column into sentiment and emotion columns
 split_col = split(col("gcp_sentiment"), ", ")
@@ -124,11 +145,12 @@ json_df = json_df.drop("gcp_sentiment")
 kafka_compatible_df = json_df.select(to_json(struct(*[col for col in json_df.columns])).alias("value"))
 
 # Write the DataFrame to Elasticsearch
-"""
+
 elasticQuery = json_df.writeStream \
    .option("checkpointLocation", "/tmp/") \
    .format("es") \
    .start(elastic_index)
+   
 """
 # Debugging output to console
 debugQuery = json_df.writeStream \
@@ -136,17 +158,7 @@ debugQuery = json_df.writeStream \
     .format("console") \
     .option("truncate", False) \
     .start()
-
-# Write the DataFrame to Kafka
-kafkaQuery = kafka_compatible_df.writeStream \
-    .format("kafka") \
-    .option("kafka.bootstrap.servers", kafkaOutputServer) \
-    .option("topic", outputTopic) \
-    .option("checkpointLocation", "/tmp/kafka_checkpoint") \
-    .start()
-
 """
 elasticQuery.awaitTermination()
-"""
-debugQuery.awaitTermination()
-kafkaQuery.awaitTermination()
+#debugQuery.awaitTermination()
+
