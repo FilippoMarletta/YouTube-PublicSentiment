@@ -8,7 +8,8 @@ from google.cloud import language_v2
 import random
 import json
 
-
+# MLlib imports
+from pyspark.ml.feature import RegexTokenizer, StopWordsRemover, CountVectorizer
 
 
 # Initialize Spark Context and Session
@@ -46,7 +47,7 @@ mapping = {
                     "confidence": {"type": "float"}
                 }
             },
-            "words": {"type": "keyword"}
+            "filtered_tokens": {"type": "keyword"}
         }
     }
 }
@@ -150,16 +151,12 @@ def gcp_analyze_text(text):
                 for category in response.moderation_categories
             ]
             
-            # Extract words for tag cloud
-            words = text.lower().split()
-            
             result = {
                 "document_sentiment_score": sentiment_score,
                 "document_sentiment_magnitude": sentiment_magnitude,
                 "document_sentiment_label": sentiment_label,
                 "entities": entity_data,
                 "moderation_categories": moderation_categories,
-                "words": words
             }
             
             return json.dumps(result)
@@ -171,52 +168,57 @@ def gcp_analyze_text(text):
     
 def random_analyze_text(text):
     if text is not None and text.strip() != "":
-        # Generate random document sentiment
-        sentiment_score = random.uniform(-1.0, 1.0)
-        sentiment_magnitude = random.uniform(0.0, 2.0)
-        
-        # Determine sentiment label
-        if sentiment_score > 0.6:
-            sentiment_label = 'very positive'
-        elif sentiment_score > 0.2:
-            sentiment_label = 'positive'
-        elif sentiment_score >= -0.2:
-            sentiment_label = 'neutral'
-        elif sentiment_score >= -0.6:
-            sentiment_label = 'negative'
-        else:
-            sentiment_label = 'very negative'
-        
-        # Generate random entities (between 1 and 5)
-        num_entities = random.randint(1, 5)
-        entity_types = ['PERSON', 'LOCATION', 'ORGANIZATION', 'EVENT', 'WORK_OF_ART', 'CONSUMER_GOOD']
-        entities = []
-        
-        words = text.split()
-        for i in range(num_entities):
-            if words:
-                entity_name = random.choice(words)
+        try:
+            # Genera sentimenti casuali
+            sentiment_score = random.uniform(-1, 1)
+            sentiment_magnitude = random.uniform(0, 2)
+            
+            # Determina l'etichetta del sentimento
+            if sentiment_score > 0.6:
+                sentiment_label = 'very positive'
+            elif sentiment_score > 0.2:
+                sentiment_label = 'positive'
+            elif sentiment_score >= -0.2:
+                sentiment_label = 'neutral'
+            elif sentiment_score >= -0.6:
+                sentiment_label = 'negative'
             else:
-                entity_name = f"Entity{i+1}"
-            entities.append({
-                "name": entity_name,
-                "type": random.choice(entity_types),
-                "salience": random.uniform(0.0, 1.0),
-                "sentiment_score": random.uniform(-1.0, 1.0),
-                "sentiment_magnitude": random.uniform(0.0, 2.0)
-            })
-        
-        # Sort entities by salience
-        entities = sorted(entities, key=lambda e: e['salience'], reverse=True)
-        
-        result = {
-            "document_sentiment_score": sentiment_score,
-            "document_sentiment_magnitude": sentiment_magnitude,
-            "document_sentiment_label": sentiment_label,
-            "entities": entities
-        }
-        
-        return json.dumps(result)
+                sentiment_label = 'very negative'
+            
+            # Genera entità casuali
+            entities_count = random.randint(1, 5)
+            entity_types = ['PERSON', 'LOCATION', 'ORGANIZATION', 'EVENT', 'WORK_OF_ART', 'CONSUMER_GOOD', 'OTHER']
+            entity_data = [
+                {
+                    "name": f"Entity{random.randint(1, 100)}",
+                    "type": random.choice(entity_types)
+                }
+                for _ in range(entities_count)
+            ]
+            
+            # Genera categorie di moderazione casuali
+            moderation_categories_count = random.randint(0, 3)
+            category_names = ['Violence', 'Adult', 'Hate Speech', 'Spam']
+            moderation_categories = [
+                {
+                    "name": random.choice(category_names),
+                    "confidence": random.uniform(0, 1)
+                }
+                for _ in range(moderation_categories_count)
+            ]
+            
+            result = {
+                "document_sentiment_score": sentiment_score,
+                "document_sentiment_magnitude": sentiment_magnitude,
+                "document_sentiment_label": sentiment_label,
+                "entities": entity_data,
+                "moderation_categories": moderation_categories,
+            }
+            
+            return json.dumps(result)
+        except Exception as e:
+            print(f"Error analyzing text: {e}")
+            return json.dumps({"error": str(e)})
     else:
         return json.dumps({"error": "Empty text"})
     
@@ -239,8 +241,7 @@ json_df = json_df.withColumn("text_analysis", from_json(gcp_analyze_text_udf(col
         StructField("moderation_categories", ArrayType(StructType([
             StructField("name", StringType(), True),
             StructField("confidence", FloatType(), True)
-        ])), True),
-        StructField("words", ArrayType(StringType()), True)
+        ])), True)
     ])
 ))
 
@@ -251,20 +252,24 @@ json_df = json_df.select(
     col("text_analysis.document_sentiment_magnitude").alias("sentiment_magnitude"),
     col("text_analysis.document_sentiment_label").alias("sentiment_label"),
     col("text_analysis.entities").alias("entities"),
-    col("text_analysis.moderation_categories").alias("moderation_categories"),
-    col("text_analysis.words").alias("words")
+    col("text_analysis.moderation_categories").alias("moderation_categories")
 )
 
 
+# Toknization and stop words removal
+tokenizer = RegexTokenizer(inputCol="text", outputCol="tokenized_words", pattern="\\W")
+tokenizer_df = tokenizer.transform(json_df)
+stop_words_remover = StopWordsRemover(inputCol="tokenized_words", outputCol="filtered_tokens")
+filtered_df = stop_words_remover.transform(tokenizer_df)
 
-enriched_df = json_df.select(
+
+enriched_df = filtered_df.select(
     "id", "type", "published_at", "author", "text", "like_count", "timestamp",
     "sentiment_score", "sentiment_magnitude", "sentiment_label",
-    "entities", "moderation_categories", "words"
+    "entities", "moderation_categories", "filtered_tokens"
 )
 
 # Write the DataFrame to Elasticsearch
-
 elasticQuery = enriched_df.writeStream \
    .option("checkpointLocation", "/tmp/") \
    .format("es") \
