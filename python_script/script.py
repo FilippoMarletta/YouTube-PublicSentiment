@@ -71,7 +71,7 @@ def process_comment(comment):
             return
 
         author = snippet['authorDisplayName']
-        text = snippet['textDisplay']
+        text = html.unescape(snippet['textDisplay'])
         published_at = snippet['publishedAt']
         like_count = snippet['likeCount']
 
@@ -132,7 +132,7 @@ if __name__ == '__main__':
          
 
             new_comments = []
-            for comment in reversed(comments):  # Invertiamo l'ordine per processare dal più vecchio al più recente
+            for comment in comments:  # Invertiamo l'ordine per processare dal più vecchio al più recente
                 if comment['id'] not in processed_comment_ids:
                     new_comments.append(comment)
                 else:
