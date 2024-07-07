@@ -64,7 +64,7 @@ spark = SparkSession(sc)
 sc.setLogLevel("ERROR")
 
 # Kafka configuration
-kafkaServer = "host.docker.internal:9092"
+kafkaServer = "broker:9092"
 inputTopic = "youtube-comments"
 
 # Define the schema for the JSON data with the structure of the comment data
@@ -270,14 +270,14 @@ elasticQuery = enriched_df.writeStream \
    .format("es") \
    .start(elastic_index)
    
-"""
+
 # Debugging output to console
 debugQuery = enriched_df.writeStream \
     .outputMode("append") \
     .format("console") \
     .option("truncate", False) \
     .start()
-"""
+
 elasticQuery.awaitTermination()
-#debugQuery.awaitTermination()
+debugQuery.awaitTermination()
 

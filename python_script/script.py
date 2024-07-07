@@ -14,7 +14,7 @@ MAX_RESULTS = 30
 
 
 # URL dell'istanza di Logstash
-LOGSTASH_URL = 'http://host.docker.internal:9090'
+LOGSTASH_URL = 'http://logstash-container:9090'
 
 # Inizializza il servizio delle API di YouTube
 youtube = build('youtube', 'v3', developerKey=API_KEY)
