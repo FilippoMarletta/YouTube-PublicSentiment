@@ -1,6 +1,7 @@
 import sys
 import time
 import requests
+import html
 from googleapiclient.discovery import build
 from urllib.parse import urlparse, parse_qs
 from get_docker_secret import get_docker_secret
@@ -71,7 +72,7 @@ def process_comment(comment):
             return
 
         author = snippet['authorDisplayName']
-        text = html.unescape(snippet['textDisplay'])
+        text = strip_tags(html.unescape(snippet['textDisplay']))
         published_at = snippet['publishedAt']
         like_count = snippet['likeCount']
 
