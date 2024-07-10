@@ -7,9 +7,14 @@ from elasticsearch import Elasticsearch
 from google.cloud import language_v2
 import random
 import json
+import re
 
 # MLlib imports
-from pyspark.ml.feature import RegexTokenizer, StopWordsRemover, CountVectorizer
+from pyspark.ml.feature import RegexTokenizer, StopWordsRemover
+
+from transformers import pipeline
+
+
 
 
 # Initialize Spark Context and Session
@@ -47,7 +52,8 @@ mapping = {
                     "confidence": {"type": "float"}
                 }
             },
-            "filtered_tokens": {"type": "keyword"}
+            "filtered_tokens": {"type": "keyword"},
+            "emotion": {"type": "text"}
         }
     }
 }
@@ -98,8 +104,23 @@ json_df = df.withColumn("json_data", from_json(col("value"), json_schema)) \
             .select("json_data.*", col("timestamp"))
 
 
+# Carica il modello di rilevamento delle emozioni
+emotion_model = pipeline("text-classification", model="bhadresh-savani/bert-base-go-emotion", top_k=None)
 
-
+# Funzione per rilevare le emozioni
+def detect_emotion(tokens):
+    try:
+        if tokens is not None and len(tokens) > 0:
+            # Limita la lunghezza di tokens a 512
+            text = ' '.join(tokens[:512])
+            emotions = emotion_model(text)[0]
+            return max(emotions, key=lambda x: x['score'])['label']
+        else:
+            return None
+    except Exception as e:
+        print(f"Error in detect_emotion: {e}")
+        return None
+    
 def gcp_analyze_text(text):
     if text is not None and text.strip() != "":
         client = language_v2.LanguageServiceClient()
@@ -222,14 +243,17 @@ def random_analyze_text(text):
     else:
         return json.dumps({"error": "Empty text"})
     
+  
 # Create a UDF for the text analysis
 gcp_analyze_text_udf = udf(gcp_analyze_text, StringType())
 # Create a UDF for the random text analysis
 random_analyze_text_udf = udf(random_analyze_text, StringType())
+# UDF per rilevare le emozioni
+detect_emotion_udf = udf(detect_emotion, StringType())
 
 
 # Apply text analysis to the DataFrame
-json_df = json_df.withColumn("text_analysis", from_json(gcp_analyze_text_udf(col("text")), 
+json_df = json_df.withColumn("text_analysis", from_json(random_analyze_text_udf(col("text")), 
     StructType([
         StructField("document_sentiment_score", FloatType(), True),
         StructField("document_sentiment_magnitude", FloatType(), True),
@@ -252,7 +276,7 @@ json_df = json_df.select(
     col("text_analysis.document_sentiment_magnitude").alias("sentiment_magnitude"),
     col("text_analysis.document_sentiment_label").alias("sentiment_label"),
     col("text_analysis.entities").alias("entities"),
-    col("text_analysis.moderation_categories").alias("moderation_categories")
+    col("text_analysis.moderation_categories").alias("moderation_categories"),
 )
 
 
@@ -262,11 +286,13 @@ tokenizer_df = tokenizer.transform(json_df)
 stop_words_remover = StopWordsRemover(inputCol="tokenized_words", outputCol="filtered_tokens")
 filtered_df = stop_words_remover.transform(tokenizer_df)
 
+# Applica il rilevamento delle emozioni al DataFrame
+filtered_df = filtered_df.withColumn("emotion", detect_emotion_udf(col("filtered_tokens")))
 
 enriched_df = filtered_df.select(
     "id", "type", "published_at", "author", "text", "like_count", "timestamp",
     "sentiment_score", "sentiment_magnitude", "sentiment_label",
-    "entities", "moderation_categories", "filtered_tokens"
+    "entities", "moderation_categories", "filtered_tokens", "emotion"
 )
 
 # Write the DataFrame to Elasticsearch
