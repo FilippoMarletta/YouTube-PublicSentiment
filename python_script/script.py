@@ -2,6 +2,7 @@ import sys
 import time
 import requests
 import html
+import re
 from googleapiclient.discovery import build
 from urllib.parse import urlparse, parse_qs
 from get_docker_secret import get_docker_secret
@@ -22,6 +23,12 @@ youtube = build('youtube', 'v3', developerKey=API_KEY)
 
 # Deque per tenere traccia degli ID dei commenti già letti
 processed_comment_ids = set()
+
+
+def remove_html_tags(text):
+    """Remove html tags from a string"""
+    clean = re.compile('<.*?>')
+    return re.sub(clean, '', text)
 
 def get_video_id(url):
     try:
@@ -72,7 +79,7 @@ def process_comment(comment):
             return
 
         author = snippet['authorDisplayName']
-        text = strip_tags(html.unescape(snippet['textDisplay']))
+        text = remove_html_tags(html.unescape(snippet['textDisplay']))
         published_at = snippet['publishedAt']
         like_count = snippet['likeCount']
 
