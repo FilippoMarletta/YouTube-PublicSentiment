@@ -113,6 +113,16 @@ services:
       - "5601:5601"
     depends_on:
       - elasticsearch
+  
+  init-kibana:
+    image: curlimages/curl:8.8.0
+    container_name: init-kibana
+    volumes:
+      - ./kibana/data/export.ndjson:/export.ndjson
+      - ./kibana/init_kibana.sh:/usr/share/kibana/init_kibana.sh
+    command: ["/bin/sh", "/usr/share/kibana/init_kibana.sh"]
+    depends_on:
+      - kibana
 
 secrets:
   youtube_api_key:
