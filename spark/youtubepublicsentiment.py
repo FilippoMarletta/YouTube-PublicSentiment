@@ -1,10 +1,10 @@
 from pyspark import SparkContext
 from pyspark.conf import SparkConf
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, from_json, udf
+from pyspark.sql.functions import col, from_json, udf, explode
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, FloatType, ArrayType
 from elasticsearch import Elasticsearch
-from google.cloud import language_v2
+from google.cloud import language_v1
 import random
 import json
 import re
@@ -35,36 +35,21 @@ mapping = {
             "text": {"type": "text"},
             "like_count": {"type": "integer"},
             "timestamp": {"type": "date"},
-            "sentiment_score": {"type": "float"},
-            "sentiment_magnitude": {"type": "float"},
-            "sentiment_label": {"type": "keyword"},
-            "entities": {
-                "type": "nested",
-                "properties": {
-                    "name": {"type": "keyword"},
-                    "type": {"type": "keyword"}
-                }
-            },
-            "moderation_categories": {
-                "type": "nested",
-                "properties": {
-                    "name": {"type": "keyword"},
-                    "confidence": {"type": "float"}
-                }
-            },
-            "filtered_tokens": {"type": "keyword"},
-            "emotion": {"type": "text"}
         }
     }
 }
 
 elastic_index = "youtubecomments"
+elastic_index_without_duplicates = "youtubecomments_without_duplicates"
 
 if not es.indices.exists(index=elastic_index):
     es.indices.create(index=elastic_index, body=mapping)
 else:
     es.indices.put_mapping(index=elastic_index, body=mapping['mappings'])
-
+if not es.indices.exists(index=elastic_index_without_duplicates):
+    es.indices.create(index=elastic_index_without_duplicates, body=mapping)
+else:
+    es.indices.put_mapping(index=elastic_index_without_duplicates, body=mapping['mappings'])
 
 sc = SparkContext(appName="PythonStructuredStreamsKafka", conf=sparkConf)
 spark = SparkSession(sc)
@@ -85,7 +70,7 @@ json_schema = StructType([
 ])
 
 
-# Read streaming data from Kafka 
+# Read streaming data from Kafka
 df = spark \
     .readStream \
     .format("kafka") \
@@ -108,92 +93,100 @@ json_df = df.withColumn("json_data", from_json(col("value"), json_schema)) \
 emotion_model = pipeline("text-classification", model="bhadresh-savani/bert-base-go-emotion", top_k=None)
 
 # Funzione per rilevare le emozioni
-def detect_emotion(tokens):
+def detect_emotion(text):
     try:
-        if tokens is not None and len(tokens) > 0:
-            # Limita la lunghezza di tokens a 512
-            text = ' '.join(tokens[:512])
-            emotions = emotion_model(text)[0]
-            return max(emotions, key=lambda x: x['score'])['label']
+        if text is not None and text.strip() != "":
+            
+            prediction = emotion_model(text, truncation=True, max_length=512)
+            
+            print(prediction)
+            
+            emotions = {
+                "most_relevant_emotion": prediction[0][0]["label"]
+            }
+            
+            for i in range(28):
+                emotions[prediction[0][i]["label"]] = prediction[0][i]["score"]
+            
+            return json.dumps(emotions)
         else:
             return None
     except Exception as e:
         print(f"Error in detect_emotion: {e}")
         return None
     
+    
+def determine_sentiment_label(score):
+    if score > 0.6:
+        return 'very positive'
+    elif score > 0.2:
+        return 'positive'
+    elif score >= -0.2:
+        return 'neutral'
+    elif score >= -0.6:
+        return 'negative'
+    else:
+        return 'very negative'  
+
+        
+
 def gcp_analyze_text(text):
     if text is not None and text.strip() != "":
-        client = language_v2.LanguageServiceClient()
-        document = language_v2.Document(content=text, type_=language_v2.Document.Type.PLAIN_TEXT)
-        
+        client = language_v1.LanguageServiceClient()
+        document = language_v1.Document(content=text, type_=language_v1.Document.Type.PLAIN_TEXT)
+
         try:
             response = client.annotate_text(
                 document=document,
                 features={
-                    "extract_entities": True,
                     "extract_document_sentiment": True,
-                    "moderate_text": True,
+                    "extract_entity_sentiment": True,
                 },
-                encoding_type=language_v2.EncodingType.UTF8,
+                encoding_type=language_v1.EncodingType.UTF8,
             )
-            
+
             # Document sentiment
             sentiment = response.document_sentiment
             sentiment_score = sentiment.score
             sentiment_magnitude = sentiment.magnitude
-            
-            # Determine sentiment label
-            if sentiment_score > 0.6:
-                sentiment_label = 'very positive'
-            elif sentiment_score > 0.2:
-                sentiment_label = 'positive'
-            elif sentiment_score >= -0.2:
-                sentiment_label = 'neutral'
-            elif sentiment_score >= -0.6:
-                sentiment_label = 'negative'
-            else:
-                sentiment_label = 'very negative'
+            sentiment_label = determine_sentiment_label(sentiment_score)
             
             # Entity extraction
             entity_data = [
                 {
                     "name": entity.name,
-                    "type": language_v2.Entity.Type(entity.type_).name,
+                    "type": entity.type_.name,
+                    "salience": entity.salience,
+                    "sentiment_label": determine_sentiment_label(entity.sentiment.score),
+                    "sentiment_score": entity.sentiment.score,
+                    "sentiment_magnitude": entity.sentiment.magnitude
+                    
                 }
                 for entity in response.entities
             ]
-            
-             # Moderation categories
-            moderation_categories = [
-                {
-                    "name": category.name,
-                    "confidence": category.confidence
-                }
-                for category in response.moderation_categories
-            ]
+
             
             result = {
                 "document_sentiment_score": sentiment_score,
                 "document_sentiment_magnitude": sentiment_magnitude,
                 "document_sentiment_label": sentiment_label,
                 "entities": entity_data,
-                "moderation_categories": moderation_categories,
             }
-            
+
             return json.dumps(result)
         except Exception as e:
             print(f"Error analyzing text: {e}")
             return json.dumps({"error": str(e)})
     else:
         return json.dumps({"error": "Empty text"})
-    
+
 def random_analyze_text(text):
     if text is not None and text.strip() != "":
         try:
             # Genera sentimenti casuali
             sentiment_score = random.uniform(-1, 1)
             sentiment_magnitude = random.uniform(0, 2)
-            
+
             # Determina l'etichetta del sentimento
             if sentiment_score > 0.6:
                 sentiment_label = 'very positive'
@@ -205,45 +198,38 @@ def random_analyze_text(text):
                 sentiment_label = 'negative'
             else:
                 sentiment_label = 'very negative'
-            
+
             # Genera entità casuali
             entities_count = random.randint(1, 5)
             entity_types = ['PERSON', 'LOCATION', 'ORGANIZATION', 'EVENT', 'WORK_OF_ART', 'CONSUMER_GOOD', 'OTHER']
             entity_data = [
                 {
                     "name": f"Entity{random.randint(1, 100)}",
-                    "type": random.choice(entity_types)
+                    "type": random.choice(entity_types),
+                    "salience": random.uniform(0, 1),
+                    "sentiment_score": random.uniform(-1, 1),
+                    "sentiment_magnitude": random.uniform(0, 2)
                 }
                 for _ in range(entities_count)
             ]
-            
-            # Genera categorie di moderazione casuali
-            moderation_categories_count = random.randint(0, 3)
-            category_names = ['Violence', 'Adult', 'Hate Speech', 'Spam']
-            moderation_categories = [
-                {
-                    "name": random.choice(category_names),
-                    "confidence": random.uniform(0, 1)
-                }
-                for _ in range(moderation_categories_count)
-            ]
-            
+
+           
+
             result = {
                 "document_sentiment_score": sentiment_score,
                 "document_sentiment_magnitude": sentiment_magnitude,
                 "document_sentiment_label": sentiment_label,
                 "entities": entity_data,
-                "moderation_categories": moderation_categories,
             }
-            
+
             return json.dumps(result)
         except Exception as e:
             print(f"Error analyzing text: {e}")
             return json.dumps({"error": str(e)})
     else:
         return json.dumps({"error": "Empty text"})
-    
-  
+
+
 # Create a UDF for the text analysis
 gcp_analyze_text_udf = udf(gcp_analyze_text, StringType())
 # Create a UDF for the random text analysis
@@ -253,19 +239,19 @@ detect_emotion_udf = udf(detect_emotion, StringType())
 
 
 # Apply text analysis to the DataFrame
-json_df = json_df.withColumn("text_analysis", from_json(random_analyze_text_udf(col("text")), 
+json_df = json_df.withColumn("text_analysis", from_json(gcp_analyze_text_udf(col("text")),
     StructType([
         StructField("document_sentiment_score", FloatType(), True),
         StructField("document_sentiment_magnitude", FloatType(), True),
         StructField("document_sentiment_label", StringType(), True),
         StructField("entities", ArrayType(StructType([
             StructField("name", StringType(), True),
-            StructField("type", StringType(), True)
+            StructField("type", StringType(), True),
+            StructField("salience", FloatType(), True),
+            StructField("sentiment_label", StringType(), True),
+            StructField("sentiment_score", FloatType(), True),
+            StructField("sentiment_magnitude", FloatType(), True),
         ])), True),
-        StructField("moderation_categories", ArrayType(StructType([
-            StructField("name", StringType(), True),
-            StructField("confidence", FloatType(), True)
-        ])), True)
     ])
 ))
 
@@ -276,7 +262,6 @@ json_df = json_df.select(
     col("text_analysis.document_sentiment_magnitude").alias("sentiment_magnitude"),
     col("text_analysis.document_sentiment_label").alias("sentiment_label"),
     col("text_analysis.entities").alias("entities"),
-    col("text_analysis.moderation_categories").alias("moderation_categories"),
 )
 
 
@@ -287,23 +272,128 @@ stop_words_remover = StopWordsRemover(inputCol="tokenized_words", outputCol="fil
 filtered_df = stop_words_remover.transform(tokenizer_df)
 
 # Applica il rilevamento delle emozioni al DataFrame
-filtered_df = filtered_df.withColumn("emotion", detect_emotion_udf(col("filtered_tokens")))
+filtered_df = filtered_df.withColumn("emotions_recognition", from_json(detect_emotion_udf(col("text")),
+    StructType([
+        StructField("most_relevant_emotion", StringType(), True),
+        StructField("neutral", FloatType(), True),
+        StructField("approval", FloatType(), True),
+        StructField("realization", FloatType(), True),
+        StructField("disapproval", FloatType(), True),
+        StructField("annoyance", FloatType(), True),
+        StructField("disappointment", FloatType(), True),
+        StructField("admiration", FloatType(), True),
+        StructField("anger", FloatType(), True),
+        StructField("optimism", FloatType(), True),
+        StructField("disgust", FloatType(), True),
+        StructField("sadness", FloatType(), True),
+        StructField("surprise", FloatType(), True),
+        StructField("amusement", FloatType(), True),
+        StructField("excitement", FloatType(), True),
+        StructField("embarassment", FloatType(), True),
+        StructField("confusion", FloatType(), True),
+        StructField("fear", FloatType(), True),
+        StructField("desire", FloatType(), True),
+        StructField("caring", FloatType(), True),
+        StructField("joy", FloatType(), True),
+        StructField("curiosity", FloatType(), True),
+        StructField("nervousness", FloatType(), True),
+        StructField("pride", FloatType(), True),
+        StructField("relief", FloatType(), True),
+        StructField("remorse", FloatType(), True),
+        StructField("grief", FloatType(), True),
+        StructField("gratitude", FloatType(), True),
+        StructField("love", FloatType(), True),
+])))
 
-enriched_df = filtered_df.select(
+without_duplicates_df = filtered_df.select("id", "type", "published_at", "author", "text", "like_count", "timestamp",
+    "sentiment_score", "sentiment_magnitude", "sentiment_label", "filtered_tokens",
+    col("emotions_recognition.most_relevant_emotion").alias("most_relevant_emotion"),
+    col("emotions_recognition.neutral").alias("neutral"),
+    col("emotions_recognition.approval").alias("approval"),
+    col("emotions_recognition.realization").alias("realization"),
+    col("emotions_recognition.disapproval").alias("disapproval"),
+    col("emotions_recognition.annoyance").alias("annoyance"),
+    col("emotions_recognition.disappointment").alias("disappointment"),
+    col("emotions_recognition.admiration").alias("admiration"),
+    col("emotions_recognition.anger").alias("anger"),
+    col("emotions_recognition.optimism").alias("optimism"),
+    col("emotions_recognition.disgust").alias("disgust"),
+    col("emotions_recognition.sadness").alias("sadness"),
+    col("emotions_recognition.surprise").alias("surprise"),
+    col("emotions_recognition.amusement").alias("amusement"),
+    col("emotions_recognition.excitement").alias("excitement"),
+    col("emotions_recognition.embarassment").alias("embarassment"),
+    col("emotions_recognition.confusion").alias("confusion"),
+    col("emotions_recognition.fear").alias("fear"),
+    col("emotions_recognition.desire").alias("desire"),
+    col("emotions_recognition.caring").alias("caring"),
+    col("emotions_recognition.joy").alias("joy"),
+    col("emotions_recognition.curiosity").alias("curiosity"),
+    col("emotions_recognition.nervousness").alias("nervousness"),
+    col("emotions_recognition.pride").alias("pride"),
+    col("emotions_recognition.relief").alias("relief"),
+    col("emotions_recognition.remorse").alias("remorse"),
+    col("emotions_recognition.grief").alias("grief"),
+    col("emotions_recognition.gratitude").alias("gratitude"),
+    col("emotions_recognition.love").alias("love")
+)
+# Esplodere la colonna entities
+exploded_entities_df = filtered_df.withColumn("exploded_entity", explode(col("entities")))
+
+with_duplicates_df = exploded_entities_df.select(
     "id", "type", "published_at", "author", "text", "like_count", "timestamp",
-    "sentiment_score", "sentiment_magnitude", "sentiment_label",
-    "entities", "moderation_categories", "filtered_tokens", "emotion"
+    "sentiment_score", "sentiment_magnitude", "sentiment_label", "filtered_tokens",
+    col("exploded_entity.name").alias("entity_name"),
+    col("exploded_entity.type").alias("entity_type"),
+    col("exploded_entity.salience").alias("entity_salience"),
+    col("exploded_entity.sentiment_label").alias("entity_sentiment_label"),
+    col("exploded_entity.sentiment_score").alias("entity_sentiment_score"),
+    col("exploded_entity.sentiment_magnitude").alias("entity_sentiment_magnitude"),
+    col("emotions_recognition.most_relevant_emotion").alias("most_relevant_emotion"),
+    col("emotions_recognition.neutral").alias("neutral"),
+    col("emotions_recognition.approval").alias("approval"),
+    col("emotions_recognition.realization").alias("realization"),
+    col("emotions_recognition.disapproval").alias("disapproval"),
+    col("emotions_recognition.annoyance").alias("annoyance"),
+    col("emotions_recognition.disappointment").alias("disappointment"),
+    col("emotions_recognition.admiration").alias("admiration"),
+    col("emotions_recognition.anger").alias("anger"),
+    col("emotions_recognition.optimism").alias("optimism"),
+    col("emotions_recognition.disgust").alias("disgust"),
+    col("emotions_recognition.sadness").alias("sadness"),
+    col("emotions_recognition.surprise").alias("surprise"),
+    col("emotions_recognition.amusement").alias("amusement"),
+    col("emotions_recognition.excitement").alias("excitement"),
+    col("emotions_recognition.embarassment").alias("embarassment"),
+    col("emotions_recognition.confusion").alias("confusion"),
+    col("emotions_recognition.fear").alias("fear"),
+    col("emotions_recognition.desire").alias("desire"),
+    col("emotions_recognition.caring").alias("caring"),
+    col("emotions_recognition.joy").alias("joy"),
+    col("emotions_recognition.curiosity").alias("curiosity"),
+    col("emotions_recognition.nervousness").alias("nervousness"),
+    col("emotions_recognition.pride").alias("pride"),
+    col("emotions_recognition.relief").alias("relief"),
+    col("emotions_recognition.remorse").alias("remorse"),
+    col("emotions_recognition.grief").alias("grief"),
+    col("emotions_recognition.gratitude").alias("gratitude"),
+    col("emotions_recognition.love").alias("love")
 )
 
+
 # Write the DataFrame to Elasticsearch
-elasticQuery = enriched_df.writeStream \
-   .option("checkpointLocation", "/tmp/") \
+elasticQuery = with_duplicates_df.writeStream \
+   .option("checkpointLocation", "/tmp/with_duplicates") \
    .format("es") \
    .start(elastic_index)
-   
+
+elasticQuery = without_duplicates_df.writeStream \
+    .option("checkpointLocation", "/tmp/without_duplicates") \
+    .format("es") \
+    .start(elastic_index_without_duplicates)
 
 # Debugging output to console
-debugQuery = enriched_df.writeStream \
+debugQuery = with_duplicates_df.writeStream \
     .outputMode("append") \
     .format("console") \
     .option("truncate", False) \
@@ -311,4 +401,3 @@ debugQuery = enriched_df.writeStream \
 
 elasticQuery.awaitTermination()
 debugQuery.awaitTermination()
-
