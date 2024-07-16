@@ -92,7 +92,7 @@ json_df = df.withColumn("json_data", from_json(col("value"), json_schema)) \
 # Carica il modello di rilevamento delle emozioni
 emotion_model = pipeline("text-classification", model="bhadresh-savani/bert-base-go-emotion", top_k=None)
 
-# Funzione per rilevare le emozioni
+# function to detect emotion
 def detect_emotion(text):
     try:
         if text is not None and text.strip() != "":
@@ -115,7 +115,7 @@ def detect_emotion(text):
         print(f"Error in detect_emotion: {e}")
         return None
     
-    
+# Function to determine sentiment label
 def determine_sentiment_label(score):
     if score > 0.6:
         return 'very positive'
@@ -129,7 +129,7 @@ def determine_sentiment_label(score):
         return 'very negative'  
 
         
-
+# Function to analyze text using Google Cloud Natural Language API
 def gcp_analyze_text(text):
     if text is not None and text.strip() != "":
         client = language_v1.LanguageServiceClient()
@@ -180,26 +180,16 @@ def gcp_analyze_text(text):
     else:
         return json.dumps({"error": "Empty text"})
 
+# Function to not waste google API calls
 def random_analyze_text(text):
     if text is not None and text.strip() != "":
         try:
             # Genera sentimenti casuali
             sentiment_score = random.uniform(-1, 1)
             sentiment_magnitude = random.uniform(0, 2)
+            sentiment_label = determine_sentiment_label(sentiment_score)
 
-            # Determina l'etichetta del sentimento
-            if sentiment_score > 0.6:
-                sentiment_label = 'very positive'
-            elif sentiment_score > 0.2:
-                sentiment_label = 'positive'
-            elif sentiment_score >= -0.2:
-                sentiment_label = 'neutral'
-            elif sentiment_score >= -0.6:
-                sentiment_label = 'negative'
-            else:
-                sentiment_label = 'very negative'
-
-            # Genera entità casuali
+            #random entities
             entities_count = random.randint(1, 5)
             entity_types = ['PERSON', 'LOCATION', 'ORGANIZATION', 'EVENT', 'WORK_OF_ART', 'CONSUMER_GOOD', 'OTHER']
             entity_data = [
@@ -212,8 +202,6 @@ def random_analyze_text(text):
                 }
                 for _ in range(entities_count)
             ]
-
-           
 
             result = {
                 "document_sentiment_score": sentiment_score,
@@ -234,7 +222,7 @@ def random_analyze_text(text):
 gcp_analyze_text_udf = udf(gcp_analyze_text, StringType())
 # Create a UDF for the random text analysis
 random_analyze_text_udf = udf(random_analyze_text, StringType())
-# UDF per rilevare le emozioni
+# Create a UDF for the emotion detection
 detect_emotion_udf = udf(detect_emotion, StringType())
 
 
@@ -271,7 +259,7 @@ tokenizer_df = tokenizer.transform(json_df)
 stop_words_remover = StopWordsRemover(inputCol="tokenized_words", outputCol="filtered_tokens")
 filtered_df = stop_words_remover.transform(tokenizer_df)
 
-# Applica il rilevamento delle emozioni al DataFrame
+# Apply emotion detection to the DataFrame
 filtered_df = filtered_df.withColumn("emotions_recognition", from_json(detect_emotion_udf(col("text")),
     StructType([
         StructField("most_relevant_emotion", StringType(), True),
@@ -305,6 +293,7 @@ filtered_df = filtered_df.withColumn("emotions_recognition", from_json(detect_em
         StructField("love", FloatType(), True),
 ])))
 
+# Select without duplicates
 without_duplicates_df = filtered_df.select("id", "type", "published_at", "author", "text", "like_count", "timestamp",
     "sentiment_score", "sentiment_magnitude", "sentiment_label", "filtered_tokens",
     col("emotions_recognition.most_relevant_emotion").alias("most_relevant_emotion"),
@@ -337,9 +326,10 @@ without_duplicates_df = filtered_df.select("id", "type", "published_at", "author
     col("emotions_recognition.gratitude").alias("gratitude"),
     col("emotions_recognition.love").alias("love")
 )
-# Esplodere la colonna entities
+# Explode entities
 exploded_entities_df = filtered_df.withColumn("exploded_entity", explode(col("entities")))
 
+# Select with duplicates
 with_duplicates_df = exploded_entities_df.select(
     "id", "type", "published_at", "author", "text", "like_count", "timestamp",
     "sentiment_score", "sentiment_magnitude", "sentiment_label", "filtered_tokens",
@@ -381,12 +371,12 @@ with_duplicates_df = exploded_entities_df.select(
 )
 
 
-# Write the DataFrame to Elasticsearch
+# Write the DataFrame to Elasticsearch with duplicates
 elasticQuery = with_duplicates_df.writeStream \
    .option("checkpointLocation", "/tmp/with_duplicates") \
    .format("es") \
    .start(elastic_index)
-
+# Write the DataFrame to Elasticsearch without duplicates
 elasticQuery = without_duplicates_df.writeStream \
     .option("checkpointLocation", "/tmp/without_duplicates") \
     .format("es") \
@@ -401,3 +391,4 @@ debugQuery = with_duplicates_df.writeStream \
 
 elasticQuery.awaitTermination()
 debugQuery.awaitTermination()
+
