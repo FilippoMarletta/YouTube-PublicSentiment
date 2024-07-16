@@ -8,12 +8,11 @@ services:
       - ./python_script/script.py:/app/script.py
     secrets:
       - youtube_api_key
+    environment:
+      VIDEO_URL: "https://www.youtube.com/watch?v=Sz3rPqoQk74&ab_channel=PAYDAY3"
     entrypoint:
-      [
-        "python",
-        "script.py",
-        "",
-      ]
+      - python
+      - /app/script.py
     tty: true
     depends_on:
       logstash:
@@ -40,6 +39,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+      KAFKA_RECONNECT_BACKOFF_MS_MAX: 5000
 
   kafka-topics:
     image: apache/kafka:latest
@@ -48,7 +48,7 @@ services:
       /opt/kafka/bin/kafka-topics.sh --create --topic youtube-comments --bootstrap-server broker:9092"
     depends_on:
       - kafka-broker
-
+  # TESTING CONSUMER
   # kafka-conusumer-input:
   # image: apache/kafka:latest
   # command: /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server broker:9092 --topic youtube-comments
