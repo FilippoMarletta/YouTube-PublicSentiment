@@ -122,7 +122,7 @@ if __name__ == '__main__':
         global comment_count
         comment_count = 0
         page_token = None
-        time.sleep(30)
+        time.sleep(60)
         while True:
             response = get_comments(video_id, page_token)
             if response is None:

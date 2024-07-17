@@ -8,10 +8,7 @@ from google.cloud import language_v1
 import random
 import json
 import re
-
-# MLlib imports
 from pyspark.ml.feature import RegexTokenizer, StopWordsRemover
-
 from transformers import pipeline
 
 
@@ -89,7 +86,7 @@ json_df = df.withColumn("json_data", from_json(col("value"), json_schema)) \
             .select("json_data.*", col("timestamp"))
 
 
-# Carica il modello di rilevamento delle emozioni
+# Load the emotion recognition model
 emotion_model = pipeline("text-classification", model="bhadresh-savani/bert-base-go-emotion", top_k=None)
 
 # function to detect emotion
@@ -116,7 +113,7 @@ def detect_emotion(text):
         return None
     
 # Function to determine sentiment label
-def determine_sentiment_label(score):
+def determine_sentiment_label(score):    
     if score > 0.6:
         return 'very positive'
     elif score > 0.2:
