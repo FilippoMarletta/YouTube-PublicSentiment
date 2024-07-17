@@ -9,7 +9,7 @@ services:
     secrets:
       - youtube_api_key
     environment:
-      VIDEO_URL: "https://www.youtube.com/watch?v=Sz3rPqoQk74&ab_channel=PAYDAY3"
+      VIDEO_URL: ""
     entrypoint:
       - python
       - /app/script.py
