@@ -68,7 +68,7 @@
     docker compose up
 ```
 3. Open Kibana in your browser to see the dashboard:
-    - ![kibana](https://127.0.0.1:5601)
+    - <a href="https://127.0.0.1:5601"> Dashboard here </a>
 
 ## Actually supported lenguages:
 - English(`en`)
