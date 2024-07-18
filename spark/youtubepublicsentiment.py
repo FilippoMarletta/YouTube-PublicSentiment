@@ -7,7 +7,6 @@ from elasticsearch import Elasticsearch
 from google.cloud import language_v1
 import random
 import json
-import re
 from pyspark.ml.feature import RegexTokenizer, StopWordsRemover
 from transformers import pipeline
 
